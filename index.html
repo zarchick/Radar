@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Radar Monitor</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="container">
+
+  <!-- ОКНО АВТОРИЗАЦИИ -->
+  <div id="auth-view" class="card view-box">
+    <header class="auth-header">
+      <h1>Вход в систему</h1>
+      <div class="auth-subtitle">Radar</div>
+    </header>
+    <div id="auth-err" class="error-msg">Неверный логин или пароль</div>
+    <input type="text" id="user" class="input-field" placeholder="Логин (admin)" value="admin">
+    <input type="password" id="pass" class="input-field" placeholder="Пароль">
+    <button class="btn btn-accent" onclick="tryLogin()">Войти</button>
+  </div>
+
+  <!-- ОСНОВНОЙ ИНТЕРФЕЙС МОНИТОРИНГА -->
+  <div id="app-view" class="view-box">
+    <header>
+      <h1>Радар Присутствия</h1>
+      <div class="status-bar">
+        <div class="badge"><div id="esp-dot" class="dot"></div> ESP32</div>
+        <div class="badge"><div id="radar-dot" class="dot"></div> Радар</div>
+      </div>
+    </header>
+
+    <!-- Настройка IP адреса ESP32 -->
+    <div class="card" style="padding: 12px; margin-bottom: 12px;">
+      <div class="label" style="margin-bottom: 6px;">IP-адрес ESP32 в локальной сети:</div>
+      <div style="display: flex; gap: 8px;">
+        <input type="text" id="esp-ip" class="input-field" style="margin-bottom: 0;" placeholder="192.168.X.X или radar.local">
+        <button class="btn btn-accent" style="width: auto; padding: 0 16px;" onclick="saveIp()">Ок</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="grid">
+        <div class="metric" id="card-pres">
+          <div class="label">Присутствие</div>
+          <div class="val" id="pres">--</div>
+        </div>
+        <div class="metric" id="card-mov">
+          <div class="label">Движение</div>
+          <div class="val" id="mov">--</div>
+        </div>
+      </div>
+      <div class="grid mt-12">
+        <div class="metric highlight">
+          <div class="label">Дистанция</div>
+          <div class="val"><span id="dist">--</span> <span class="unit">см</span></div>
+        </div>
+        <div class="metric">
+          <div class="label">Энергия</div>
+          <div class="val"><span id="en">--</span> <span class="unit">%</span></div>
+        </div>
+      </div>
+    </div>
+
+    <button class="btn mb-10" onclick="downloadLogs()">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+      Скачать логи и отчёт
+    </button>
+    
+    <button class="btn btn-outline" onclick="showPwdView()">
+      Сменить пароль
+    </button>
+
+    <div class="footer-note">LD2410C • ESP32-C3 SuperMini</div>
+  </div>
+
+  <!-- ОКНО СМЕНЫ ПАРОЛЯ -->
+  <div id="pwd-view" class="card view-box">
+    <header class="auth-header">
+      <h1>Смена пароля</h1>
+      <div class="auth-subtitle">Введите текущий и новый пароль</div>
+    </header>
+    <div id="pwd-err" class="error-msg">Неверный старый пароль</div>
+    <div id="pwd-succ" class="success-msg">Пароль успешно изменен!</div>
+    <input type="password" id="old-pass" class="input-field" placeholder="Старый пароль">
+    <input type="password" id="new-pass" class="input-field" placeholder="Новый пароль">
+    <button class="btn btn-accent mb-8" onclick="changePassword()">Сохранить</button>
+    <button class="btn" onclick="hidePwdView()">Назад</button>
+  </div>
+
+</div>
+
+<script>
+function getStoredPassword() {
+  return localStorage.getItem("radar_pwd") || "admin";
+}
+
+window.onload = function() {
+  let savedIp = localStorage.getItem("esp_ip") || "";
+  document.getElementById('esp-ip').value = savedIp;
+
+  if (sessionStorage.getItem("radar_auth") === "true") {
+    showApp();
+  } else {
+    showView('auth-view');
+  }
+};
+
+function showView(viewId) {
+  document.querySelectorAll('.view-box').forEach(el => el.style.display = 'none');
+  document.getElementById(viewId).style.display = 'block';
+}
+
+function saveIp() {
+  let ip = document.getElementById('esp-ip').value.trim();
+  localStorage.setItem("esp_ip", ip);
+  alert("IP сохранен: " + ip);
+  updateData(); // Сразу проверяем связь при сохранении
+}
+
+function tryLogin() {
+  let u = document.getElementById('user').value;
+  let p = document.getElementById('pass').value;
+  document.getElementById('auth-err').style.display = 'none';
+  
+  if (u === "admin" && p === getStoredPassword()) {
+    sessionStorage.setItem("radar_auth", "true");
+    showApp();
+  } else {
+    document.getElementById('auth-err').style.display = 'block';
+  }
+}
+
+let pollInterval = null;
+
+function showApp() {
+  showView('app-view');
+  updateData();
+  if (pollInterval) clearInterval(pollInterval);
+  pollInterval = setInterval(updateData, 1000); // Опрос раз в секунду оптимален для сети
+}
+
+function showPwdView() {
+  document.getElementById('pwd-err').style.display = 'none';
+  document.getElementById('pwd-succ').style.display = 'none';
+  document.getElementById('old-pass').value = '';
+  document.getElementById('new-pass').value = '';
+  showView('pwd-view');
+}
+
+function hidePwdView() {
+  showView('app-view');
+}
+
+function changePassword() {
+  let oldP = document.getElementById('old-pass').value;
+  let newP = document.getElementById('new-pass').value;
+  
+  let errBox = document.getElementById('pwd-err');
+  let succBox = document.getElementById('pwd-succ');
+  errBox.style.display = 'none';
+  succBox.style.display = 'none';
+
+  if (oldP === getStoredPassword()) {
+    if (newP.length > 0) {
+      localStorage.setItem("radar_pwd", newP);
+      sessionStorage.removeItem("radar_auth"); 
+      succBox.style.display = 'block';
+      setTimeout(() => {
+        location.reload(); 
+      }, 1200);
+    } else {
+      errBox.innerText = "Новый пароль не может быть пустым";
+      errBox.style.display = 'block';
+    }
+  } else {
+    errBox.innerText = "Неверный старый пароль";
+    errBox.style.display = 'block';
+  }
+}
+
+async function updateData() {
+  let ip = localStorage.getItem("esp_ip");
+  if (!ip) return;
+
+  try {
+    let res = await fetch(`http://${ip}/data`, { mode: 'cors', signal: AbortSignal.timeout(2000) });
+    let j = await res.json();
+    
+    document.getElementById('pres').innerText = j.p ? "ДА" : "НЕТ";
+    document.getElementById('mov').innerText = j.m ? "ДА" : "НЕТ";
+    document.getElementById('dist').innerText = j.d > 0 ? j.d : "--";
+    document.getElementById('en').innerText = j.e;
+
+    // Индикатор связи с ESP32 загорается зеленым
+    document.getElementById('esp-dot').classList.add('active');
+    
+    // Индикатор самого радара
+    if (j.rc) {
+      document.getElementById('radar-dot').classList.add('active');
+    } else {
+      document.getElementById('radar-dot').classList.remove('active');
+    }
+
+    let pCard = document.getElementById('card-pres');
+    if (j.p) {
+      pCard.style.borderColor = 'var(--accent)';
+      pCard.style.background = 'var(--accent-glow)';
+    } else {
+      pCard.style.borderColor = 'var(--border)';
+      pCard.style.background = 'rgba(255,255,255,0.02)';
+    }
+  } catch(e) {
+    // Если нет связи или таймаут — гасим индикатор ESP
+    document.getElementById('esp-dot').classList.remove('active');
+    document.getElementById('radar-dot').classList.remove('active');
+  }
+}
+
+function downloadLogs() {
+  let ip = localStorage.getItem("esp_ip");
+  if (!ip) {
+    alert("Сначала укажите IP-адрес ESP32!");
+    return;
+  }
+  window.open(`http://${ip}/report`, '_blank');
+}
+</script>
+
+</body>
+</html>
